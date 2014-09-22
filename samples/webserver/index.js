@@ -138,6 +138,7 @@ onload = function() {
        filesMap["/"+files[i].fileName] = files[i];
       }
     }
+	console.log("files", files, filesMap)
 
     start.disabled = false;
     stop.disabled = true;
@@ -175,3 +176,33 @@ onload = function() {
     }
   });
 };
+
+/*
+fs.chooseEntry({type: 'openDirectory'}, function(entry) {
+  var id = chrome.fileSystem.retainEntry(entry);
+})
+*/
+function getEntries(cb) {
+  var id = "91C7C34511A57DFF27A011CDB3BB0B1A:funding",
+      fs = chrome.fileSystem;
+  fs.restoreEntry(id, function(entry) {
+    travers(entry);
+    var dirReader = entry.createReader();
+    dirReader.readEntries(function(entries) {
+      cb && cb(entries);
+    });
+  });
+}
+
+function travers(entry) {
+  if (entry.name.indexOf(".") == 0) return;
+  if (entry.isDirectory) {
+    entry.createReader().readEntries(function(entries) {
+      entries.forEach(function(e) {
+        travers(e);
+      });
+    })
+  } else {
+    console.log(entry.fullPath);
+  }
+}

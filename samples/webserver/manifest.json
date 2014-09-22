@@ -13,5 +13,7 @@
       "scripts": ["main.js"]
     }
   },
-  "permissions": [{"socket":["tcp-connect", "tcp-listen"]}]
+  "permissions": [{"socket":["tcp-connect", "tcp-listen"]},
+      {"fileSystem": ["write", "retainEntries", "directory"]}
+    ]
 }

@@ -1,42 +1,113 @@
-var app = angular.module('whistle', []);
-app.controller('ProxyCtrl', ['$scope',
-  function($scope) {
-    
-  }]);
+var services = angular.module("whistle.services", []);
+services.factory("fs", ["$q", function($q) {
+  var fs = chrome.fileSystem,
+      local = chrome.storage.local;
   
-onload = function() {return;
-  var start = document.getElementById("start");
-  var stop = document.getElementById("stop");
-  var hosts = document.getElementById("hosts");
-  var port = document.getElementById("port");
+  function _getEntryId() {
+    var delay = $q.defer();
 
+    // entry id is saved so no need to pick up folder every time starting our proxy server
+    local.get("entry_id", function(data) {
+      if (data.entry_id)
+        delay.resolve(data.entry_id);
+      else
+        fs.chooseEntry({type: 'openDirectory'}, function(entry) {
+          if (!entry) {
+            delay.reject('Unable to get directory entry');
+            return;
+          }
+
+          var entryId = fs.retainEntry(entry);
+          local.set({entry_id: entryId});
+          delay.resolve(entryId);
+        });
+    });
+    
+      return delay.promise;
+  }
+    
+  function _getEntryById(id) {
+    var delay = $q.defer();
+
+    fs.restoreEntry(id, function(entry) {
+      console.log("当前代理目录：", entry.fullPath)
+      delay.resolve(entry);
+    });
+
+    return delay.promise;
+  }
+  
+  travers.cnt = 0;
+  function travers(entry, filesMap, delay) {
+    if (entry.name.indexOf(".") == 0) return;
+    travers.cnt++;
+    if (entry.isDirectory) {
+      travers.cnt--;
+      entry.createReader().readEntries(function(entries) {
+        entries.forEach(function(e) {
+          travers(e, filesMap, delay);
+        });
+      })
+    } else {
+      var key = entry.fullPath.toLocaleLowerCase();
+      entry.file(function(file) {
+        filesMap[key] = file;
+        travers.cnt--;
+        if (travers.cnt == 0) {
+          delay.resolve(filesMap);
+        }
+      });
+    }
+  }
+  
+  function _getFilesMap(id) {
+    var delay = $q.defer();
+
+    fs.restoreEntry(id, function(entry) {
+      if (!entry) {
+        delay.reject('No entry!');
+        return;
+      }
+      console.log("当前代理目录：", entry.fullPath)
+      travers(entry, {'/': entry}, delay);
+    });
+
+    return delay.promise;
+  }
+  
+  return {
+    getEntryId: _getEntryId,
+    getFilesMap: _getFilesMap
+  };
+}]);
+
+services.factory("svr", ["$q", "fs", function($q, fs) {
   var socket = chrome.socket;
   var socketInfo;
   var filesMap = {};
-
-  var stringToUint8Array = function(string) {
+  var dir = "";
+  var host = "127.0.0.1";
+  var port = "8888";
+  
+  function stringToUint8Array(string) {
     var buffer = new ArrayBuffer(string.length);
     var view = new Uint8Array(buffer);
     for(var i = 0; i < string.length; i++) {
       view[i] = string.charCodeAt(i);
     }
     return view;
-  };
-
-  var arrayBufferToString = function(buffer) {
+  }
+  
+  function arrayBufferToString(buffer) {
     var str = '';
     var uArrayVal = new Uint8Array(buffer);
     for(var s = 0; s < uArrayVal.length; s++) {
       str += String.fromCharCode(uArrayVal[s]);
     }
     return str;
-  };
-
-  var logToScreen = function(log) {
-    logger.textContent += log + "\n";
   }
-
-  var writeErrorResponse = function(socketId, errorCode, keepAlive) {
+  
+  function writeErrorResponse(socketId, errorCode, keepAlive) {
     var file = { size: 0 };
     console.info("writeErrorResponse:: begin... ");
     console.info("writeErrorResponse:: file = " + file);
@@ -60,9 +131,9 @@ onload = function() {return;
     console.info("writeErrorResponse::filereader:: end onload...");
 
     console.info("writeErrorResponse:: end...");
-  };
-
-  var write200Response = function(socketId, file, keepAlive) {
+  }
+  
+  function write200Response(socketId, file, keepAlive) {
     var contentType = (file.type === "") ? "text/plain" : file.type;
     var contentLength = file.size;
     var header = stringToUint8Array("HTTP/1.0 200 OK\nContent-length: " + file.size + "\nContent-type:" + contentType + ( keepAlive ? "\nConnection: keep-alive" : "") + "\n\n");
@@ -85,14 +156,14 @@ onload = function() {return;
     };
 
     fileReader.readAsArrayBuffer(file);
-  };
-
-  var onAccept = function(acceptInfo) {
+  }
+  
+  function onAccept(acceptInfo) {
     console.log("ACCEPT", acceptInfo)
     readFromSocket(acceptInfo.socketId);
-  };
-
-  var readFromSocket = function(socketId) {
+  }
+  
+  function readFromSocket(socketId) {
     //  Read in the data
     socket.read(socketId, function(readInfo) {
       console.log("READ", readInfo);
@@ -119,7 +190,7 @@ onload = function() {return;
           writeErrorResponse(socketId, 404, keepAlive);
           return;
         }
-        logToScreen("GET 200 " + uri);
+//         logToScreen("GET 200 " + uri);
         write200Response(socketId, file, keepAlive);
       }
       else {
@@ -127,92 +198,69 @@ onload = function() {return;
         socket.destroy(socketId);
       }
     });
-  };
-
-  start.onclick = function() {
-    getEntryId(function(id) {
-      getEntries(id, function(data) {
-        data.forEach(function(e) {
-          travers(e, filesMap);
-        })
-      })
-    })
+  }
+  
+  function initLocalFiles(cb) {
+    fs.getEntryId().then(function(id) {
+      return id;
+    }).then(function(id) {
+      return fs.getFilesMap(id);
+    }).then(function(_filesMap) {
+      dir = _filesMap['/'].fullPath;
+      delete _filesMap['/'];
+      filesMap = _filesMap;
+      
+      cb && cb();
+    });
+  }
+  
+  function start() {
+    var delay = $q.defer();
     
     socket.create("tcp", {}, function(_socketInfo) {
-      socketInfo = _socketInfo;
-      socket.listen(socketInfo.socketId, hosts.value, parseInt(port.value), 50, function(result) {
+      socketInfo = _socketInfo; // global cache
+      
+      socket.listen(socketInfo.socketId, host, parseInt(port), 50, function(result) {
         console.log("LISTENING:", result);
-        socket.accept(socketInfo.socketId, onAccept);
-      });
-    });
-
-    stop.disabled = false;
-    start.disabled = true;
-  };
-
-  stop.onclick = function() {
-    stop.disabled = true;
-    start.disabled = false;
-    socket.destroy(socketInfo.socketId);
-  };
-
-  socket.getNetworkList(function(interfaces) {
-    for(var i in interfaces) {
-      var interface = interfaces[i];
-      var opt = document.createElement("option");
-      opt.value = interface.address;
-      opt.innerText = interface.name + " - " + interface.address;
-      hosts.appendChild(opt);
-    }
-  });
-};
-
-/*
-chrome.fileSystem.chooseEntry({type: 'openDirectory'}, function(entry) {
-  var id = chrome.fileSystem.retainEntry(entry);console.log(id)
-})
-*/
-function getEntryId(cb) {
-  var fs = chrome.fileSystem,
-      local = chrome.storage.local;
-  local.get("entry_id", function(data) {
-    if (!cb) return;
-    if (data.entry_id)
-      cb(data.entry_id);
-    else
-      fs.chooseEntry({type: 'openDirectory'}, function(entry) {
-        var entryId = fs.retainEntry(entry);
-        local.set({entry_id: entryId});
-        cb && cb(entryId);
-      })
-  });
-}
-function getEntries(id, cb) {
-  var fs = chrome.fileSystem;
-  //id = "91C7C34511A57DFF27A011CDB3BB0B1A:funding";
-  //id = "0B105B24D4A95DACE83C1866B8351CC9:webserver";
-  fs.restoreEntry(id, function(entry) {
-    console.log("当前代理目录：", entry.fullPath)
-    var dirReader = entry.createReader();
-    dirReader.readEntries(function(entries) {
-      cb && cb(entries);
-    });
-  });
-}
-
-function travers(entry, filesMap) {
-  if (entry.name.indexOf(".") == 0) return;
-  if (entry.isDirectory) {
-    entry.createReader().readEntries(function(entries) {
-      entries.forEach(function(e) {
-        travers(e, filesMap);
+        
+        initLocalFiles(function() {
+          socket.accept(socketInfo.socketId, onAccept);
+        
+          delay.resolve({'result': result, 'root': dir, 'socketInfo': _socketInfo});
+        })
       });
     })
-  } else {
-    var key = entry.fullPath.substr(entry.fullPath.indexOf("/", 1)).toLocaleLowerCase();
-    entry.file(function(file) {
-      filesMap[key] = file;
-    })
-    console.log(key);
+    
+    return delay.promise;
   }
-}
+  
+  function stop() {
+    socket.destroy(socketInfo.socketId);
+  }
+  
+  function getNetworkList() {
+    var delay = $q.defer();
+    
+    socket.getNetworkList(function(interfaces) {
+      delay.resolve(interfaces);
+    });
+    
+    return delay.promise;
+  }
+  
+  return {
+    start: start,
+    stop: stop,
+    getNetworkList: getNetworkList
+  }
+}]);
+
+var app = angular.module('whistle', ["whistle.services"]);
+app.controller('ProxyCtrl', ['$scope', 'fs', 'svr', function($scope, fs, svr) {
+    $scope.onStart = function() {
+      svr.start().then(function(data) {
+        console.log(data)
+        $scope.root = data.root;
+      })
+    }
+}]);

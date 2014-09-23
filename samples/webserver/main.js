@@ -5,7 +5,7 @@
  */
 chrome.app.runtime.onLaunched.addListener(function(intentData) {
   chrome.app.window.create('index.html', {
-  	id: "mainwin",
+  	id: "websvr",
     innerBounds: {
       width: 500,
       height: 640

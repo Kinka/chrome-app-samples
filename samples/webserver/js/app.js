@@ -49,7 +49,7 @@ services.factory("fs", ["$q", function($q) {
         });
       })
     } else {
-      var key = entry.fullPath.toLocaleLowerCase();
+      var key = entry.fullPath.substr(entry.fullPath.indexOf('/', 1)).toLocaleLowerCase();
       entry.file(function(file) {
         filesMap[key] = file;
         travers.cnt--;
@@ -81,7 +81,7 @@ services.factory("fs", ["$q", function($q) {
   };
 }]);
 
-services.factory("svr", ["$q", "fs", function($q, fs) {
+services.factory("svr", ["$q", "$rootScope", "fs", function($q, $rootScope, fs) {
   var socket = chrome.socket;
   var socketInfo;
   var filesMap = {};
@@ -120,7 +120,6 @@ services.factory("svr", ["$q", "fs", function($q, fs) {
     view.set(header, 0);
     console.info("writeErrorResponse:: Done setting view...");
     socket.write(socketId, outputBuffer, function(writeInfo) {
-      console.log("WRITE", writeInfo);
       if (keepAlive) {
         readFromSocket(socketId);
       } else {
@@ -145,7 +144,6 @@ services.factory("svr", ["$q", "fs", function($q, fs) {
     fileReader.onload = function(e) {
        view.set(new Uint8Array(e.target.result), header.byteLength);
        socket.write(socketId, outputBuffer, function(writeInfo) {
-         console.log("WRITE", writeInfo);
          if (keepAlive) {
            readFromSocket(socketId);
          } else {
@@ -159,14 +157,14 @@ services.factory("svr", ["$q", "fs", function($q, fs) {
   }
   
   function onAccept(acceptInfo) {
-    console.log("ACCEPT", acceptInfo)
+//     console.log("ACCEPT", acceptInfo)
     readFromSocket(acceptInfo.socketId);
   }
   
   function readFromSocket(socketId) {
     //  Read in the data
     socket.read(socketId, function(readInfo) {
-      console.log("READ", readInfo);
+      
       // Parse the request.
       var data = arrayBufferToString(readInfo.data);
       if(data.indexOf("GET ") == 0) {
@@ -187,10 +185,17 @@ services.factory("svr", ["$q", "fs", function($q, fs) {
         var file = filesMap[uri];
         if(!!file == false) {
           console.warn("File does not exist..." + uri);
+          
+          $rootScope.$broadcast('svr:error', "GET 404 " + uri);
+          $rootScope.$apply();
+          
           writeErrorResponse(socketId, 404, keepAlive);
           return;
         }
-//         logToScreen("GET 200 " + uri);
+        
+        $rootScope.$broadcast('svr:accept', "GET 200 " + uri);
+        $rootScope.$apply();
+        
         write200Response(socketId, file, keepAlive);
       }
       else {
@@ -214,14 +219,17 @@ services.factory("svr", ["$q", "fs", function($q, fs) {
     });
   }
   
-  function start() {
+  function start(_host, _port) {
+    host = _host || "127.0.0.1";
+    port = _port || 8888;
+    
     var delay = $q.defer();
     
     socket.create("tcp", {}, function(_socketInfo) {
       socketInfo = _socketInfo; // global cache
       
       socket.listen(socketInfo.socketId, host, parseInt(port), 50, function(result) {
-        console.log("LISTENING:", result);
+        console.log(host + ":" + port + " LISTENING:", result);
         
         initLocalFiles(function() {
           socket.accept(socketInfo.socketId, onAccept);
@@ -242,7 +250,9 @@ services.factory("svr", ["$q", "fs", function($q, fs) {
     var delay = $q.defer();
     
     socket.getNetworkList(function(interfaces) {
-      delay.resolve(interfaces);
+      delay.resolve(interfaces.filter(function(intf) {
+        return intf.prefixLength == 24;
+      }));
     });
     
     return delay.promise;
@@ -256,11 +266,34 @@ services.factory("svr", ["$q", "fs", function($q, fs) {
 }]);
 
 var app = angular.module('whistle', ["whistle.services"]);
-app.controller('ProxyCtrl', ['$scope', 'fs', 'svr', function($scope, fs, svr) {
+app.config(function($sceProvider) {
+  $sceProvider.enabled(false);
+});
+app.controller('ProxyCtrl', ['$scope', '$sce', 'fs', 'svr', function($scope, $sce, fs, svr) {
+    svr.getNetworkList().then(function(intfs) {
+      $scope.hosts = intfs || [];
+      $scope.hosts.splice(0, 0, {address: "127.0.0.1"});
+      $scope.host = intfs[0].address;
+      $scope.port = "8888";
+    });
+    
     $scope.onStart = function() {
-      svr.start().then(function(data) {
-        console.log(data)
+      svr.start($scope.host, $scope.port).then(function(data) {
         $scope.root = data.root;
+        $scope.running = true;
       })
     }
+    
+    $scope.onStop = function() {
+      svr.stop();
+      $scope.running = false;
+    }
+    
+    $scope.logger = "";
+    $scope.$on('svr:accept', function(event, data) {
+      $scope.logger += "<span style='color: green;'>" + data + "</span>\n";
+    });
+    $scope.$on('svr:error', function(event, data) {
+      $scope.logger += "<span style='color: red;'>" + data + "</span>\n";
+    });
 }]);

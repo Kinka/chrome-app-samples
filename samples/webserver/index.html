@@ -26,7 +26,11 @@
     <body ng-controller="ProxyCtrl">
       <div class="hero-unit">
         <h1>HTTP Webserver</h1>
-         <p>本地静态文件代理<br>{{root}}</p>
+         <p><span>proxy for local files</span>
+            <select ng-model="entry" ng-change="onEntryChange()" ng-options="entry.path for entry in locals">
+            </select>
+            <button class="btn btn-small" ng-click="onAddEntry()">Add</button>
+         </p>
          <p>
            <select id="hosts" ng-model="host" ng-options="h.address as h.address for h in hosts">
            </select>

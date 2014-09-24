@@ -75,9 +75,30 @@ services.factory("fs", ["$q", function($q) {
     return delay.promise;
   }
   
+  function _chooseEntry() {
+    var delay = $q.defer();
+    
+    fs.chooseEntry({type: 'openDirectory'}, function(entry) {
+      if (!entry) {
+        delay.reject('Unable to get directory entry');
+        return;
+      }
+      
+      local.get(function(data) {
+        var entries = data.entries || {};
+        entries[entry.fullPath] = fs.retainEntry(entry);
+        local.set({'entries': entries});
+        delay.resolve(entries[entry.fullPath]);
+      })
+    });
+    
+    return delay.promise;
+  }
+  
   return {
     getEntryId: _getEntryId,
-    getFilesMap: _getFilesMap
+    getFilesMap: _getFilesMap,
+    chooseEntry: _chooseEntry
   };
 }]);
 
@@ -269,7 +290,7 @@ var app = angular.module('whistle', ["whistle.services"]);
 app.config(function($sceProvider) {
   $sceProvider.enabled(false);
 });
-app.controller('ProxyCtrl', ['$scope', '$sce', 'fs', 'svr', function($scope, $sce, fs, svr) {
+app.controller('ProxyCtrl', ['$scope', '$sce', '$timeout', 'fs', 'svr', function($scope, $sce, $timeout, fs, svr) {
     svr.getNetworkList().then(function(intfs) {
       $scope.hosts = intfs || [];
       $scope.hosts.splice(0, 0, {address: "127.0.0.1"});
@@ -296,4 +317,16 @@ app.controller('ProxyCtrl', ['$scope', '$sce', 'fs', 'svr', function($scope, $sc
     $scope.$on('svr:error', function(event, data) {
       $scope.logger += "<span style='color: red;'>" + data + "</span>\n";
     });
+    
+    $scope.locals = [{id: 'abc', path: '/webserver'}];
+    $scope.entry = $scope.locals[0];
+    
+    $scope.onEntryChange = function() {
+      
+    }
+    $scope.onAddEntry = function() {
+      fs.chooseEntry().then(function(entry) {
+        console.log(entry)
+      })
+    }
 }]);
